@@ -34,9 +34,9 @@ jobs:
         run: safety check -r requirements.txt --json > safety-report.json 2>&1 || echo "{}" > safety-report.json
 
       # --- SECURITY GATE (The "Brain") ---
-      # This step MUST exist now
       - name: Enforce Security Policy
-        run: python security_gate.py
+        run: python security_gate.py --bandit bandit-report.json --safety safety-report.json
+
 
       # --- DAST (ZAP) ---
       - name: Build & Run App for DAST
