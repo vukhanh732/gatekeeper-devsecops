@@ -8,7 +8,6 @@ jobs:
   security-operations:
     runs-on: ubuntu-latest
     steps:
-      # --- PHASE 1: PREPARATION ---
       - name: Checkout Code
         uses: actions/checkout@v3
 
@@ -23,31 +22,39 @@ jobs:
           pip install -r requirements.txt
           pip install bandit safety
 
-      # --- PHASE 2: STATIC ANALYSIS (SAST & SCA) ---
+      # --- SAST (Bandit) ---
       - name: SAST Scan (Bandit)
+        # We allow this to "fail" silently so our custom script handles the logic
+        continue-on-error: true 
         run: bandit -r . -lll -ii -f json -o bandit-report.json
-        continue-on-error: true
-        
-      - name: SCA Scan (Safety)
-        # Checks if libraries like Flask 2.0.1 have known CVEs
-        run: safety check -r requirements.txt --continue-on-error --json > safety-report.json
 
-      # --- PHASE 3: DYNAMIC ANALYSIS (DAST) ---
-      # We must build and run the app so ZAP can attack it
+      # --- SCA (Safety) ---
+      - name: SCA Scan (Safety)
+        continue-on-error: true
+        # Safety might return non-zero exit codes, we capture the JSON
+        run: safety check -r requirements.txt --json > safety-report.json || true
+
+      # --- SECURITY GATE (The "Brain") ---
+      - name: Enforce Security Policy
+        run: python security_gate.py --bandit bandit-report.json --safety safety-report.json
+
+      # --- DAST (ZAP) ---
+      # We run this AFTER the gate (or before, depending on policy). 
+      # Usually DAST is slow, so we gate early if SAST fails.
       - name: Build & Run App for DAST
         run: |
           docker build -t gatekeeper-test .
           docker run -d -p 5000:5000 --name test-container gatekeeper-test
-          sleep 10  # Give it time to wake up
+          sleep 10
 
       - name: DAST Scan (OWASP ZAP)
         uses: zaproxy/action-baseline@v0.9.0
         with:
           target: 'http://localhost:5000'
           rules_file_name: '.zap/rules.tsv'
-          cmd_options: '-a'  # 'Attack' mode (crawls and injects payloads)
+          cmd_options: '-a'
 
-      # --- PHASE 4: REPORTING ---
+      # --- REPORTING ---
       - name: Upload All Reports
         if: always()
         uses: actions/upload-artifact@v4
