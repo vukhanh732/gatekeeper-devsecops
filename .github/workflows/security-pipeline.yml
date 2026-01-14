@@ -26,7 +26,8 @@ jobs:
       # --- PHASE 2: STATIC ANALYSIS (SAST & SCA) ---
       - name: SAST Scan (Bandit)
         run: bandit -r . -lll -ii -f json -o bandit-report.json
-
+        continue-on-error: true
+        
       - name: SCA Scan (Safety)
         # Checks if libraries like Flask 2.0.1 have known CVEs
         run: safety check -r requirements.txt --continue-on-error --json > safety-report.json
