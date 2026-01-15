@@ -72,10 +72,12 @@ jobs:
             safety-report.json
             zap_report.html
 
-      # NOTIFICATION 1: Discord (Easy setup for Personal/Demo use)
-      # Trigger: Only runs if 'DISCORD_WEBHOOK' secret is set
+      # NOTIFICATION 1: Discord
+      # Fix: We map the secret to an env var, then check the env var.
       - name: Notify Discord
-        if: always() && secrets.DISCORD_WEBHOOK != ''
+        if: always() && env.DISCORD_WEBHOOK_URL != ''
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK }}
         uses: sarisia/actions-status-discord@v1
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
@@ -83,14 +85,15 @@ jobs:
           description: |
             **Status:** ${{ job.status }}
             **Branch:** ${{ github.ref_name }}
-            
             [View Full Report](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
           color: ${{ job.status == 'success' && '0x00ff00' || '0xff0000' }}
 
-      # NOTIFICATION 2: Microsoft Teams (Enterprise Standard)
-      # Trigger: Only runs if 'TEAMS_WEBHOOK' secret is set
+      # NOTIFICATION 2: Microsoft Teams
+      # Fix: Same env var strategy.
       - name: Notify MS Teams
-        if: always() && secrets.TEAMS_WEBHOOK != ''
+        if: always() && env.TEAMS_WEBHOOK_URL != ''
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK }}
         run: |
           curl -H "Content-Type: application/json" -d '{
             "type": "message",
@@ -102,8 +105,7 @@ jobs:
                 "version": "1.2",
                 "body": [
                   { "type": "TextBlock", "text": "🛡️ Gatekeeper Scan: ${{ job.status }}", "weight": "Bolder", "size": "Large" },
-                  { "type": "TextBlock", "text": "Branch: ${{ github.ref_name }}" },
-                  { "type": "TextBlock", "text": "Check GitHub Actions for detailed evidence." }
+                  { "type": "TextBlock", "text": "Branch: ${{ github.ref_name }}" }
                 ]
               }
             }]
