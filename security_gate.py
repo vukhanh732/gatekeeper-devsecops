@@ -23,16 +23,32 @@ def check_bandit(report_file):
         return 0, 0
 
 def check_safety(report_file):
-    """Parses Safety JSON report for CVEs."""
+    """Parses Safety JSON report for CVEs - handles mixed text+JSON output."""
     try:
         with open(report_file, 'r') as f:
-            data = json.load(f)
-            
-        # Safety 2.x/3.x returns a list of issues or a dict with report_meta
-        vulns = 0
-        if isinstance(data, list):
-            vulns = len(data)
-        elif isinstance(data, dict):
+            lines = f.readlines()
+        
+        # Find the first line that starts with '{'
+        json_content = None
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith('{'):
+                # Join from this line onwards
+                json_content = ''.join(lines[i:])
+                break
+        
+        if not json_content:
+            print(f"\n[SAFETY SCA] No JSON found in report")
+            return 0
+        
+        data = json.loads(json_content)
+        
+        # Safety 3.x format
+        vulns_array = data.get('vulnerabilities', [])
+        vulns = len(vulns_array)
+        
+        # Fallback: check report_meta
+        if vulns == 0 and 'report_meta' in data:
             vulns = data.get('report_meta', {}).get('vulnerabilities_found', 0)
             
         print(f"\n[SAFETY SCA] Scan Complete")
@@ -41,6 +57,8 @@ def check_safety(report_file):
         return vulns
     except Exception as e:
         print(f"[ERROR] Could not parse Safety report: {e}")
+        import traceback
+        traceback.print_exc()
         return 0
 
 def main():
