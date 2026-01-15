@@ -3,21 +3,28 @@ import os
 
 app = Flask(__name__)
 
-# VULNERABILITY 1: Hardcoded AWS Secret (SAST target)
-# NEVER do this in real life. We are doing this to trigger our security scanner later.
-AWS_ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE" 
+# SECURE: Read from environment variable
+AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY_ID")
 
 @app.route('/')
 def home():
-    return "<h1>The Gatekeeper Project</h1><p>Welcome to the vulnerable app.</p>"
+    return render_template_string('''
+        <h1>Welcome to Gatekeeper Demo</h1>
+        <form action="/search" method="get">
+            <input type="text" name="query" placeholder="Search users...">
+            <button type="submit">Search</button>
+        </form>
+    ''')
 
+# INTENTIONAL VULNERABILITY: SQL Injection (for demo purposes)
 @app.route('/search')
 def search():
-    query = request.args.get('q', '')
-    # VULNERABILITY 2: Reflected Cross-Site Scripting (XSS) (DAST target)
-    # We are rendering user input directly without sanitization.
-    template = f"<h2>Search Results for: {query}</h2>"
-    return render_template_string(template)
+    query = request.args.get('query', '')
+    # BAD PRACTICE: Direct string concatenation in SQL (simulated)
+    # In real app: cursor.execute(f"SELECT * FROM users WHERE name = '{query}'")
+    result = f"Searching for: {query}"
+    return render_template_string(f"<h2>{result}</h2><p>Results would appear here.</p>")
 
 if __name__ == '__main__':
+    # SECURE: Debug mode disabled for production
     app.run(debug=False, host='0.0.0.0', port=5000)

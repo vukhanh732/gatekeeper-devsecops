@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 """
-Enhanced Security Dashboard Generator
-Aggregates SAST, SCA, and DAST results with detailed vulnerability breakdown.
+Enterprise Security Dashboard Generator
+Provides detailed remediation guidance for all vulnerabilities.
 """
 import json
 import os
 from datetime import datetime
 
 def load_bandit_report():
-    """Parse Bandit SAST results."""
+    """Parse Bandit SAST results with full details."""
     try:
         with open('bandit-report.json', 'r') as f:
             data = json.load(f)
             metrics = data.get('metrics', {}).get('_totals', {})
             results = data.get('results', [])
+            
+            # Enrich with remediation info
+            for issue in results:
+                issue['remediation'] = get_bandit_remediation(issue.get('test_id'))
             
             return {
                 'high': metrics.get('SEVERITY.HIGH', 0),
@@ -22,37 +26,60 @@ def load_bandit_report():
                 'issues': results,
                 'total': len(results)
             }
-    except:
+    except Exception as e:
+        print(f"[DEBUG] Bandit error: {e}")
         return {'high': 0, 'medium': 0, 'low': 0, 'issues': [], 'total': 0}
 
+def get_bandit_remediation(test_id):
+    """Provide specific remediation steps for Bandit findings."""
+    remediation_map = {
+        'B201': {
+            'fix': 'Set debug=False in production or use environment variables',
+            'code': 'app.run(debug=False)  # or debug=os.getenv("DEBUG", "False") == "True"'
+        },
+        'B608': {
+            'fix': 'Use parameterized queries instead of string concatenation',
+            'code': 'cursor.execute("SELECT * FROM users WHERE name = ?", (query,))'
+        },
+        'B105': {
+            'fix': 'Store secrets in environment variables or a secrets manager',
+            'code': 'API_KEY = os.getenv("API_KEY")'
+        }
+    }
+    return remediation_map.get(test_id, {'fix': 'Review code and apply security best practices', 'code': ''})
+
 def load_safety_report():
-    """Parse Safety SCA results (handles deprecation warning)."""
+    """Parse Safety SCA results with upgrade commands."""
     try:
         with open('safety-report.json', 'r') as f:
             content = f.read()
             
-        # Safety outputs warning text before JSON, find the JSON part
         if '{' not in content:
             return {'count': 0, 'vulns': [], 'total_packages': {}}
             
         json_start = content.find('{')
         data = json.loads(content[json_start:])
         
-        # Safety 3.x format has nested structure
         vulns_array = data.get('vulnerabilities', [])
         
-        # Extract CVE details
         cve_list = []
         for v in vulns_array:
-            # Get the CVE info
             cve_data = v.get('CVE', {})
             cve_id = cve_data.get('CVE', 'No CVE') if isinstance(cve_data, dict) else 'No CVE'
             
+            pkg_name = v.get('package_name', 'Unknown')
+            current_ver = v.get('analyzed_version', 'N/A')
+            
+            # Get recommended safe version
+            analyzed_req = v.get('analyzed_requirement', {})
+            
             cve_list.append({
-                'package': v.get('package_name', 'Unknown'),
-                'version': v.get('analyzed_version', 'N/A'),
+                'package': pkg_name,
+                'version': current_ver,
                 'cve': cve_id,
-                'advisory': v.get('advisory', 'No advisory available')[:200] + '...'
+                'advisory': v.get('advisory', 'No advisory')[:250] + '...',
+                'fix_command': f'pip install --upgrade {pkg_name}',
+                'file': 'requirements.txt'
             })
         
         return {
@@ -61,13 +88,11 @@ def load_safety_report():
             'total_packages': data.get('scanned_packages', {})
         }
     except Exception as e:
-        print(f"[DEBUG] Safety parse error: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"[DEBUG] Safety error: {e}")
         return {'count': 0, 'vulns': [], 'total_packages': {}}
 
 def load_zap_report():
-    """Parse ZAP DAST results."""
+    """Parse ZAP DAST results with detailed remediation."""
     try:
         with open('zap_report.json', 'r') as f:
             data = json.load(f)
@@ -82,11 +107,17 @@ def load_zap_report():
                 risk = risk_desc.split()[0] if ' ' in risk_desc else risk_desc
                 risk_counts[risk] = risk_counts.get(risk, 0) + 1
                 
+                instances = alert.get('instances', [])
+                affected_urls = [inst.get('uri', 'Unknown URL') for inst in instances[:3]]
+                
                 detailed_alerts.append({
                     'name': alert.get('name', 'Unknown'),
                     'risk': risk,
-                    'desc': alert.get('desc', 'No description')[:150] + '...',
-                    'solution': alert.get('solution', 'No solution provided')[:150] + '...'
+                    'desc': alert.get('desc', 'No description')[:200] + '...',
+                    'solution': alert.get('solution', 'No solution')[:300] + '...',
+                    'reference': alert.get('reference', ''),
+                    'cwe_id': alert.get('cweid', 'N/A'),
+                    'urls': affected_urls
                 })
                 
             return {
@@ -95,43 +126,82 @@ def load_zap_report():
                 'total': len(alerts)
             }
     except Exception as e:
-        print(f"[DEBUG] ZAP parse error: {e}")
+        print(f"[DEBUG] ZAP error: {e}")
         return {'alerts': [], 'counts': {'High': 0, 'Medium': 0, 'Low': 0, 'Informational': 0}, 'total': 0}
 
 def generate_vulnerability_cards(bandit, safety, zap):
-    """Generate HTML cards for each vulnerability."""
+    """Generate detailed HTML cards with remediation steps."""
     cards_html = ""
     
-    # Bandit Issues
-    for issue in bandit['issues'][:5]:  # Limit to 5 for readability
+    # Bandit Issues with Remediation
+    for issue in bandit['issues'][:10]:
+        severity = issue.get('issue_severity', 'MEDIUM').lower()
+        remediation = issue.get('remediation', {})
+        
         cards_html += f"""
-        <div class="vuln-card severity-{issue.get('issue_severity', 'MEDIUM').lower()}">
+        <div class="vuln-card severity-{severity}">
             <div class="vuln-header">
                 <span class="vuln-type">SAST</span>
-                <span class="severity-badge {issue.get('issue_severity', 'MEDIUM').lower()}">{issue.get('issue_severity', 'MEDIUM')}</span>
+                <span class="severity-badge {severity}">{issue.get('issue_severity', 'MEDIUM')}</span>
             </div>
-            <h4>{issue.get('test_name', 'Unknown Issue')}</h4>
-            <p><strong>File:</strong> {issue.get('filename', 'N/A')} (Line {issue.get('line_number', '?')})</p>
-            <p>{issue.get('issue_text', 'No description')}</p>
+            <h4>{issue.get('test_name', 'Unknown Issue').replace('_', ' ').title()}</h4>
+            
+            <div class="vuln-section">
+                <strong>📍 Location:</strong>
+                de>{issue.get('filename', 'N/A')}:{issue.get('line_number', '?')}</code>
+            </div>
+            
+            <div class="vuln-section">
+                <strong>⚠️ Issue:</strong>
+                <p>{issue.get('issue_text', 'No description')}</p>
+            </div>
+            
+            <div class="vuln-section">
+                <strong>🔧 How to Fix:</strong>
+                <p>{remediation.get('fix', 'Apply security best practices')}</p>
+                {'<pre>' + remediation.get('code', '') + '</pre>' if remediation.get('code') else ''}
+            </div>
+            
+            <div class="vuln-section">
+                <strong>🔗 Reference:</strong>
+                <a href="{issue.get('more_info', '#')}" target="_blank">Bandit Documentation</a>
+            </div>
         </div>
         """
     
-    # Safety Vulnerabilities
-    for vuln in safety['vulns'][:5]:
+    # Safety CVEs with Fix Commands
+    for vuln in safety['vulns'][:10]:
         cards_html += f"""
         <div class="vuln-card severity-high">
             <div class="vuln-header">
                 <span class="vuln-type">SCA</span>
                 <span class="severity-badge high">CVE</span>
             </div>
-            <h4>{vuln['package']} {vuln['version']}</h4>
-            <p><strong>CVE:</strong> {vuln['cve']}</p>
-            <p>{vuln['advisory']}</p>
+            <h4>{vuln['cve']}: {vuln['package']}</h4>
+            
+            <div class="vuln-section">
+                <strong>📦 Package:</strong> {vuln['package']} v{vuln['version']}
+            </div>
+            
+            <div class="vuln-section">
+                <strong>📍 Found in:</strong> de>{vuln['file']}</code>
+            </div>
+            
+            <div class="vuln-section">
+                <strong>⚠️ Vulnerability:</strong>
+                <p>{vuln['advisory']}</p>
+            </div>
+            
+            <div class="vuln-section">
+                <strong>🔧 Fix Command:</strong>
+                <pre>{vuln['fix_command']}</pre>
+                <p style="font-size: 0.85em; color: #6c757d;">Run this command to upgrade to a secure version</p>
+            </div>
         </div>
         """
     
-    # ZAP Alerts
-    for alert in zap['alerts'][:5]:
+    # ZAP Alerts with URLs
+    for alert in zap['alerts'][:10]:
         cards_html += f"""
         <div class="vuln-card severity-{alert['risk'].lower()}">
             <div class="vuln-header">
@@ -139,36 +209,49 @@ def generate_vulnerability_cards(bandit, safety, zap):
                 <span class="severity-badge {alert['risk'].lower()}">{alert['risk']}</span>
             </div>
             <h4>{alert['name']}</h4>
-            <p>{alert['desc']}</p>
-            <p><strong>Solution:</strong> {alert['solution']}</p>
+            
+            <div class="vuln-section">
+                <strong>🌐 Affected URLs:</strong>
+                {''.join([f'<div>de>{url}</code></div>' for url in alert['urls'][:3]])}
+            </div>
+            
+            <div class="vuln-section">
+                <strong>⚠️ Description:</strong>
+                <p>{alert['desc']}</p>
+            </div>
+            
+            <div class="vuln-section">
+                <strong>🔧 Remediation:</strong>
+                <p>{alert['solution']}</p>
+            </div>
+            
+            <div class="vuln-section">
+                <strong>🔗 CWE ID:</strong> {alert['cwe_id']}
+                {f'<br><strong>Reference:</strong> <a href="{alert["reference"]}" target="_blank">More Info</a>' if alert['reference'] else ''}
+            </div>
         </div>
         """
     
     return cards_html if cards_html else '<p style="text-align:center; color: #28a745;">✅ No detailed findings to display</p>'
 
 def generate_html_dashboard(simulate_complex=False):
-    """Generate the HTML dashboard."""
+    """Generate enterprise dashboard with full remediation guidance."""
     
-    # Load all reports
     bandit = load_bandit_report()
     safety = load_safety_report()
     zap = load_zap_report()
     
-    # Simulation mode for "complex app"
     if simulate_complex or os.getenv('SIMULATE_COMPLEX_APP') == 'true':
         bandit['high'] = 12
         bandit['medium'] = 28
-        bandit['low'] = 45
         safety['count'] = 37
         zap['counts'] = {'High': 8, 'Medium': 22, 'Low': 31, 'Informational': 15}
     
-    # Calculate overall risk score
     total_critical = bandit['high'] + zap['counts'].get('High', 0)
     total_high = bandit['medium'] + zap['counts'].get('Medium', 0)
     total_medium = bandit['low'] + zap['counts'].get('Low', 0) + safety['count']
     total_findings = total_critical + total_high + total_medium
     
-    # Determine status
     if total_critical > 0:
         status = "CRITICAL"
         status_color = "#dc3545"
@@ -182,7 +265,6 @@ def generate_html_dashboard(simulate_complex=False):
         status = "SECURE"
         status_color = "#28a745"
     
-    # Generate vulnerability detail cards
     vuln_cards = generate_vulnerability_cards(bandit, safety, zap)
     
     html = f"""
@@ -200,7 +282,7 @@ def generate_html_dashboard(simulate_complex=False):
             padding: 20px;
         }}
         .container {{
-            max-width: 1400px;
+                        max-width: 1400px;
             margin: 0 auto;
             background: white;
             border-radius: 12px;
@@ -286,7 +368,7 @@ def generate_html_dashboard(simulate_complex=False):
         }}
         .vuln-grid {{
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
             gap: 20px;
             margin-top: 20px;
         }}
@@ -309,7 +391,7 @@ def generate_html_dashboard(simulate_complex=False):
         .vuln-header {{
             display: flex;
             justify-content: space-between;
-            margin-bottom: 10px;
+            margin-bottom: 15px;
         }}
         .vuln-type {{
             background: #667eea;
@@ -337,13 +419,48 @@ def generate_html_dashboard(simulate_complex=False):
         }}
         .vuln-card h4 {{
             color: #212529;
-            margin: 10px 0;
+            margin: 0 0 15px 0;
+            font-size: 1.1em;
         }}
-        .vuln-card p {{
-            color: #6c757d;
+        .vuln-section {{
+            margin: 15px 0;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }}
+        .vuln-section strong {{
+            color: #2a5298;
+            display: block;
+            margin-bottom: 5px;
+        }}
+        .vuln-section p {{
+            color: #495057;
             font-size: 0.9em;
             line-height: 1.6;
             margin: 5px 0;
+        }}
+        .vuln-section code {{
+            background: #e9ecef;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+        }}
+        .vuln-section pre {{
+            background: #212529;
+            color: #00ff00;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 0.85em;
+            margin-top: 5px;
+        }}
+        .vuln-section a {{
+            color: #667eea;
+            text-decoration: none;
+        }}
+        .vuln-section a:hover {{
+            text-decoration: underline;
         }}
         .footer {{
             background: #212529;
@@ -384,8 +501,7 @@ def generate_html_dashboard(simulate_complex=False):
         </div>
         
         <div class="section">
-            
-            <h2>📋 Detailed Findings</h2>
+            <h2>📋 Scan Summary</h2>
             
             <div class="tool-result">
                 <h3>🔍 SAST Scan (Bandit)</h3>
@@ -396,7 +512,7 @@ def generate_html_dashboard(simulate_complex=False):
             <div class="tool-result">
                 <h3>📦 SCA Scan (Safety)</h3>
                 <p><strong>Vulnerable Dependencies:</strong> {safety['count']}</p>
-                {'<p style="color: #28a745; margin-top: 10px;">✅ All dependencies are secure</p>' if safety['count'] == 0 else '<p style="color: #ffc107; margin-top: 10px;">⚠️ Dependencies with known CVEs detected</p>'}
+                {'<p style="color: #28a745; margin-top: 10px;">✅ All dependencies are secure</p>' if safety['count'] == 0 else '<p style="color: #ffc107; margin-top: 10px;">⚠️ Dependencies with known CVEs detected - upgrade required</p>'}
             </div>
             
             <div class="tool-result">
@@ -407,15 +523,16 @@ def generate_html_dashboard(simulate_complex=False):
         </div>
         
         <div class="section">
-            <h2>🔎 Vulnerability Details</h2>
+            <h2>🔎 Detailed Vulnerability Analysis</h2>
+            <p style="margin-bottom: 20px; color: #6c757d;">Each finding includes location, description, and remediation guidance</p>
             <div class="vuln-grid">
                 {vuln_cards}
             </div>
         </div>
         
         <div class="footer">
-            <p>Generated by Gatekeeper DevSecOps Pipeline</p>
-            <p style="margin-top: 5px; font-size: 0.9em;">© 2026 - Automated Security Scanning</p>
+            <p><strong>Generated by Gatekeeper DevSecOps Pipeline</strong></p>
+            <p style="margin-top: 5px; font-size: 0.9em;">© 2026 - Automated Security Scanning & Remediation</p>
         </div>
     </div>
 </body>
@@ -426,7 +543,7 @@ def generate_html_dashboard(simulate_complex=False):
         f.write(html)
     
     print("=" * 70)
-    print("✅ Security Dashboard generated: security-dashboard.html")
+    print("✅ Enhanced Security Dashboard generated: security-dashboard.html")
     print(f"📊 Status: {status}")
     print(f"🔢 Total Findings: {total_findings}")
     print(f"   - Critical: {total_critical}")
@@ -436,3 +553,4 @@ def generate_html_dashboard(simulate_complex=False):
 
 if __name__ == "__main__":
     generate_html_dashboard()
+
