@@ -150,13 +150,16 @@ def load_zap_report():
         return {'alerts': [], 'counts': {'High': 0, 'Medium': 0, 'Low': 0, 'Informational': 0}, 'total': 0}
 
 def generate_vulnerability_cards(bandit, safety, zap):
-    """Generate detailed HTML cards with remediation steps."""
+    """Generate detailed HTML cards with code snippets."""
     cards_html = ""
     
-    # Bandit Issues with Remediation
+    # Bandit Issues with CODE SNIPPETS
     for issue in bandit['issues'][:10]:
         severity = issue.get('issue_severity', 'MEDIUM').lower()
         remediation = issue.get('remediation', {})
+        
+        # Extract the vulnerable code
+        vulnerable_code = issue.get('code', 'Code not available')
         
         cards_html += f"""
         <div class="vuln-card severity-{severity}">
@@ -172,6 +175,11 @@ def generate_vulnerability_cards(bandit, safety, zap):
             </div>
             
             <div class="vuln-section">
+                <strong>💻 Vulnerable Code:</strong>
+                <pre style="background: #fff3cd; color: #856404; padding: 10px; border-left: 3px solid #ffc107;">{vulnerable_code.strip()}</pre>
+            </div>
+            
+            <div class="vuln-section">
                 <strong>⚠️ Issue:</strong>
                 <p>{issue.get('issue_text', 'No description')}</p>
             </div>
@@ -179,17 +187,17 @@ def generate_vulnerability_cards(bandit, safety, zap):
             <div class="vuln-section">
                 <strong>🔧 How to Fix:</strong>
                 <p>{remediation.get('fix', 'Apply security best practices')}</p>
-                {'<pre>' + remediation.get('code', '') + '</pre>' if remediation.get('code') else ''}
+                {'<pre style="background: #d4edda; color: #155724; padding: 10px; border-left: 3px solid #28a745;">' + remediation.get('code', '') + '</pre>' if remediation.get('code') else ''}
             </div>
             
             <div class="vuln-section">
                 <strong>🔗 Reference:</strong>
-                <a href="{issue.get('more_info', '#')}" target="_blank">Bandit Documentation</a>
+                <a href="https://bandit.readthedocs.io/en/latest/plugins/{issue.get('test_id', '').lower()}_{'_'.join(issue.get('test_name', '').split('_'))}.html" target="_blank">Bandit Documentation</a>
             </div>
         </div>
         """
     
-    # Safety CVEs with Fix Commands
+    # Safety CVEs - keep existing code
     for vuln in safety['vulns'][:10]:
         cards_html += f"""
         <div class="vuln-card severity-high">
@@ -214,13 +222,13 @@ def generate_vulnerability_cards(bandit, safety, zap):
             
             <div class="vuln-section">
                 <strong>🔧 Fix Command:</strong>
-                <pre>{vuln['fix_command']}</pre>
+                <pre style="background: #212529; color: #00ff00;">{vuln['fix_command']}</pre>
                 <p style="font-size: 0.85em; color: #6c757d;">Run this command to upgrade to a secure version</p>
             </div>
         </div>
         """
     
-    # ZAP Alerts with URLs
+    # ZAP code stays the same...
     for alert in zap['alerts'][:10]:
         cards_html += f"""
         <div class="vuln-card severity-{alert['risk'].lower()}">
@@ -247,12 +255,12 @@ def generate_vulnerability_cards(bandit, safety, zap):
             
             <div class="vuln-section">
                 <strong>🔗 CWE ID:</strong> {alert['cwe_id']}
-                {f'<br><strong>Reference:</strong> <a href="{alert["reference"]}" target="_blank">More Info</a>' if alert['reference'] else ''}
             </div>
         </div>
         """
     
     return cards_html if cards_html else '<p style="text-align:center; color: #28a745;">✅ No detailed findings to display</p>'
+
 
 def generate_html_dashboard(simulate_complex=False):
     """Generate enterprise dashboard with full remediation guidance."""
