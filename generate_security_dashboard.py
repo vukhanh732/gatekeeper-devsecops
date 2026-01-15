@@ -32,30 +32,38 @@ def load_safety_report():
             content = f.read()
             
         # Safety outputs warning text before JSON, find the JSON part
-        if '{' in content:
-            json_start = content.find('{')
-            data = json.loads(content[json_start:])
+        if '{' not in content:
+            return {'count': 0, 'vulns': [], 'total_packages': {}}
             
-            # New Safety format has 'vulnerabilities' array
-            vulns = data.get('vulnerabilities', [])
+        json_start = content.find('{')
+        data = json.loads(content[json_start:])
+        
+        # Safety 3.x format has nested structure
+        vulns_array = data.get('vulnerabilities', [])
+        
+        # Extract CVE details
+        cve_list = []
+        for v in vulns_array:
+            # Get the CVE info
+            cve_data = v.get('CVE', {})
+            cve_id = cve_data.get('CVE', 'No CVE') if isinstance(cve_data, dict) else 'No CVE'
             
-            # Extract unique CVEs and package info
-            cve_list = []
-            for v in vulns:
-                cve_list.append({
-                    'package': v.get('package_name', 'Unknown'),
-                    'version': v.get('analyzed_version', 'N/A'),
-                    'cve': v.get('CVE', {}).get('CVE', 'No CVE'),
-                    'advisory': v.get('advisory', '')[:200] + '...'  # Truncate long text
-                })
-            
-            return {
-                'count': len(vulns),
-                'vulns': cve_list,
-                'total_packages': data.get('scanned_packages', {})
-            }
+            cve_list.append({
+                'package': v.get('package_name', 'Unknown'),
+                'version': v.get('analyzed_version', 'N/A'),
+                'cve': cve_id,
+                'advisory': v.get('advisory', 'No advisory available')[:200] + '...'
+            })
+        
+        return {
+            'count': len(vulns_array),
+            'vulns': cve_list,
+            'total_packages': data.get('scanned_packages', {})
+        }
     except Exception as e:
         print(f"[DEBUG] Safety parse error: {e}")
+        import traceback
+        traceback.print_exc()
         return {'count': 0, 'vulns': [], 'total_packages': {}}
 
 def load_zap_report():
