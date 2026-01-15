@@ -112,3 +112,16 @@ jobs:
               }
             }]
           }' "${{ secrets.TEAMS_WEBHOOK }}"
+
+      # --- PHASE 6: SECURITY DASHBOARD ---
+      
+      - name: Generate Security Dashboard
+        if: always()
+        run: python generate_security_dashboard.py
+        
+      - name: Upload Security Dashboard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-dashboard
+          path: security-dashboard.html
