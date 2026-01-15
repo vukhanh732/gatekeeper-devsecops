@@ -17,7 +17,7 @@ jobs:
         run: |
           rm -f bandit-report.json safety-report.json zap_report.json zap_report.html
           echo "Cleaned old scan reports"
-          
+
       - name: Set up Python 3.9
         uses: actions/setup-python@v4
         with:
@@ -30,17 +30,18 @@ jobs:
           pip install bandit safety
 
       # --- PHASE 2: STATIC ANALYSIS (SAST & SCA) ---
-      
+
       # SAST: Scans python code for vulnerabilities (Bandit)
       - name: SAST Scan (Bandit)
         continue-on-error: true 
-        run: bandit -r . -ll -f json -o bandit-report.json
+        run: bandit -r . -f json -o bandit-report.json
 
       # SCA: Scans libraries for known CVEs (Safety)
       - name: SCA Scan (Safety)
         continue-on-error: true
-        # Redirect stderr to stdout to handle warnings gracefully
-        run: safety check -r requirements.txt --json > safety-report.json 2>&1 || echo "{}" > safety-report.json
+        run: |
+          safety check --file requirements.txt --json > safety-report.json 2>&1 || true
+          if [ ! -s safety-report.json ]; then echo '{"vulnerabilities": []}' > safety-report.json; fi
 
       # --- PHASE 3: POLICY ENFORCEMENT ---
       
@@ -58,14 +59,16 @@ jobs:
           sleep 10 # Wait for Flask to start
 
       # Attack the running app with OWASP ZAP
+            # Attack the running app with OWASP ZAP
       - name: DAST Scan (OWASP ZAP)
         continue-on-error: true
         uses: zaproxy/action-baseline@v0.9.0
         with:
           target: 'http://localhost:5000'
-          rules_file_name: '.zap/rules.tsv'
-          cmd_options: '-a' # Attack mode
-          fail_action: false # Allow build to proceed to reporting even if ZAP finds issues
+          cmd_options: '-a'
+          fail_action: false
+          allow_issue_writing: false
+
 
       # --- PHASE 5: REPORTING & NOTIFICATIONS ---
 
