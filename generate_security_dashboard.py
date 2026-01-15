@@ -49,61 +49,66 @@ def get_bandit_remediation(test_id):
     return remediation_map.get(test_id, {'fix': 'Review code and apply security best practices', 'code': ''})
 
 def load_safety_report():
-    """Parse Safety SCA results with better error handling."""
+    """Parse Safety SCA results - handles text+JSON mixed output."""
     try:
-        with open('safety-report.json', 'r') as f:
-            content = f.read()
-        
-        print(f"[DEBUG] Safety file size: {len(content)} bytes")
-        
-        if not content.strip() or '{' not in content:
-            print("[DEBUG] Safety report is empty or invalid")
+        if not os.path.exists('safety-report.json'):
+            print("[WARNING] safety-report.json not found")
             return {'count': 0, 'vulns': [], 'total_packages': {}}
             
-        json_start = content.find('{')
-        data = json.loads(content[json_start:])
+        with open('safety-report.json', 'r') as f:
+            lines = f.readlines()
         
-        print(f"[DEBUG] Safety JSON keys: {list(data.keys())}")
+        # Find the first line that starts with '{'
+        json_content = None
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith('{'):
+                # Join from this line onwards
+                json_content = ''.join(lines[i:])
+                break
         
-        # Safety 3.x has 'vulnerabilities' array
+        if not json_content:
+            print("[WARNING] No JSON found in Safety report")
+            return {'count': 0, 'vulns': [], 'total_packages': {}}
+        
+        data = json.loads(json_content)
         vulns_array = data.get('vulnerabilities', [])
         
-        print(f"[DEBUG] Found {len(vulns_array)} vulnerabilities")
-        
-        if not vulns_array:
-            # Maybe it's in 'report_meta'?
-            meta = data.get('report_meta', {})
-            vuln_count = meta.get('vulnerabilities_found', 0)
-            if vuln_count > 0:
-                print(f"[DEBUG] report_meta says {vuln_count} vulns but array is empty")
+        print(f"[DEBUG] Safety found {len(vulns_array)} vulnerabilities")
         
         cve_list = []
         for v in vulns_array:
-            cve_data = v.get('CVE', {})
-            cve_id = cve_data.get('CVE', 'No CVE') if isinstance(cve_data, dict) else 'No CVE'
+            cve_obj = v.get('CVE', {})
+            cve_id = cve_obj.get('CVE', 'No CVE') if isinstance(cve_obj, dict) else 'No CVE'
             
             pkg_name = v.get('package_name', 'Unknown')
             current_ver = v.get('analyzed_version', 'N/A')
+            advisory_text = v.get('advisory', 'No advisory')
+            
+            if len(advisory_text) > 250:
+                advisory_text = advisory_text[:250] + '...'
             
             cve_list.append({
                 'package': pkg_name,
                 'version': current_ver,
                 'cve': cve_id,
-                'advisory': v.get('advisory', 'No advisory')[:250] + '...',
-                'fix_command': f'pip install --upgrade {pkg_name}',
+                'advisory': advisory_text,
+                'fix_command': f'pip install --upgrade {pkg_name}>=3.0',
                 'file': 'requirements.txt'
             })
         
         return {
-            'count': len(vulns_array),
+            'count': len(cve_list),
             'vulns': cve_list,
             'total_packages': data.get('scanned_packages', {})
         }
+        
     except Exception as e:
-        print(f"[DEBUG] Safety parse error: {e}")
+        print(f"[ERROR] Safety parsing failed: {e}")
         import traceback
         traceback.print_exc()
         return {'count': 0, 'vulns': [], 'total_packages': {}}
+
 
 
 def load_zap_report():
