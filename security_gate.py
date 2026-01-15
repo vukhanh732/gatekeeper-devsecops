@@ -23,24 +23,34 @@ def check_bandit(report_file):
         return 0, 0
 
 def check_safety(report_file):
-    """Parses Safety JSON report for CVEs - handles mixed text+JSON output."""
+    """Parses Safety JSON report - extracts JSON from mixed text output."""
     try:
         with open(report_file, 'r') as f:
-            lines = f.readlines()
+            content = f.read()
         
-        # Find the first line that starts with '{'
-        json_content = None
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            if stripped.startswith('{'):
-                # Join from this line onwards
-                json_content = ''.join(lines[i:])
-                break
-        
-        if not json_content:
+        # Find the JSON object boundaries
+        start = content.find('{')
+        if start == -1:
             print(f"\n[SAFETY SCA] No JSON found in report")
             return 0
         
+        # Find the matching closing brace by counting braces
+        brace_count = 0
+        end = start
+        for i in range(start, len(content)):
+            if content[i] == '{':
+                brace_count += 1
+            elif content[i] == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    end = i + 1
+                    break
+        
+        if brace_count != 0:
+            print(f"\n[SAFETY SCA] Malformed JSON in report")
+            return 0
+        
+        json_content = content[start:end]
         data = json.loads(json_content)
         
         # Safety 3.x format
