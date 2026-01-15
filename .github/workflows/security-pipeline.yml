@@ -29,7 +29,7 @@ jobs:
       # SAST: Scans python code for vulnerabilities (Bandit)
       - name: SAST Scan (Bandit)
         continue-on-error: true 
-        run: bandit -r . -lll -ii -f json -o bandit-report.json
+        run: bandit -r . -ll -ii -f json -o bandit-report.json
 
       # SCA: Scans libraries for known CVEs (Safety)
       - name: SCA Scan (Safety)
