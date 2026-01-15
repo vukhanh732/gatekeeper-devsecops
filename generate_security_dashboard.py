@@ -49,18 +49,33 @@ def get_bandit_remediation(test_id):
     return remediation_map.get(test_id, {'fix': 'Review code and apply security best practices', 'code': ''})
 
 def load_safety_report():
-    """Parse Safety SCA results with upgrade commands."""
+    """Parse Safety SCA results with better error handling."""
     try:
         with open('safety-report.json', 'r') as f:
             content = f.read()
-            
-        if '{' not in content:
+        
+        print(f"[DEBUG] Safety file size: {len(content)} bytes")
+        
+        if not content.strip() or '{' not in content:
+            print("[DEBUG] Safety report is empty or invalid")
             return {'count': 0, 'vulns': [], 'total_packages': {}}
             
         json_start = content.find('{')
         data = json.loads(content[json_start:])
         
+        print(f"[DEBUG] Safety JSON keys: {list(data.keys())}")
+        
+        # Safety 3.x has 'vulnerabilities' array
         vulns_array = data.get('vulnerabilities', [])
+        
+        print(f"[DEBUG] Found {len(vulns_array)} vulnerabilities")
+        
+        if not vulns_array:
+            # Maybe it's in 'report_meta'?
+            meta = data.get('report_meta', {})
+            vuln_count = meta.get('vulnerabilities_found', 0)
+            if vuln_count > 0:
+                print(f"[DEBUG] report_meta says {vuln_count} vulns but array is empty")
         
         cve_list = []
         for v in vulns_array:
@@ -69,9 +84,6 @@ def load_safety_report():
             
             pkg_name = v.get('package_name', 'Unknown')
             current_ver = v.get('analyzed_version', 'N/A')
-            
-            # Get recommended safe version
-            analyzed_req = v.get('analyzed_requirement', {})
             
             cve_list.append({
                 'package': pkg_name,
@@ -88,8 +100,11 @@ def load_safety_report():
             'total_packages': data.get('scanned_packages', {})
         }
     except Exception as e:
-        print(f"[DEBUG] Safety error: {e}")
+        print(f"[DEBUG] Safety parse error: {e}")
+        import traceback
+        traceback.print_exc()
         return {'count': 0, 'vulns': [], 'total_packages': {}}
+
 
 def load_zap_report():
     """Parse ZAP DAST results with detailed remediation."""

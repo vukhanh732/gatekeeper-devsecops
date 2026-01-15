@@ -23,13 +23,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install bandit safety
+          pip list | grep -E "flask|werkzeug"  # Debug: Show installed versions
 
       # --- PHASE 2: STATIC ANALYSIS (SAST & SCA) ---
       
       # SAST: Scans python code for vulnerabilities (Bandit)
       - name: SAST Scan (Bandit)
         continue-on-error: true 
-        run: bandit -r . -ll -ii -f json -o bandit-report.json
+        run: bandit -r . -ll -f json -o bandit-report.json
 
       # SCA: Scans libraries for known CVEs (Safety)
       - name: SCA Scan (Safety)
