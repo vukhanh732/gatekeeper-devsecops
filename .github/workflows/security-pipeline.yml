@@ -13,6 +13,11 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v3
 
+      - name: Clean Old Reports
+        run: |
+          rm -f bandit-report.json safety-report.json zap_report.json zap_report.html
+          echo "Cleaned old scan reports"
+          
       - name: Set up Python 3.9
         uses: actions/setup-python@v4
         with:
@@ -23,7 +28,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install bandit safety
-          pip list | grep -E "flask|werkzeug"  # Debug: Show installed versions
 
       # --- PHASE 2: STATIC ANALYSIS (SAST & SCA) ---
       
