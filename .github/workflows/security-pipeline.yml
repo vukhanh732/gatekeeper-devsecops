@@ -8,6 +8,7 @@ jobs:
   security-operations:
     runs-on: ubuntu-latest
     steps:
+      # --- PHASE 1: PREPARATION ---
       - name: Checkout Code
         uses: actions/checkout@v3
 
@@ -22,39 +23,45 @@ jobs:
           pip install -r requirements.txt
           pip install bandit safety
 
-      # --- SAST (Bandit) ---
+      # --- PHASE 2: STATIC ANALYSIS (SAST & SCA) ---
+      
+      # SAST: Scans python code for vulnerabilities (Bandit)
       - name: SAST Scan (Bandit)
         continue-on-error: true 
         run: bandit -r . -lll -ii -f json -o bandit-report.json
 
-      # --- SCA (Safety) ---
+      # SCA: Scans libraries for known CVEs (Safety)
       - name: SCA Scan (Safety)
         continue-on-error: true
-        # We redirect stderr to stdout to prevent shell crashes
+        # Redirect stderr to stdout to handle warnings gracefully
         run: safety check -r requirements.txt --json > safety-report.json 2>&1 || echo "{}" > safety-report.json
 
-      # --- SECURITY GATE (The "Brain") ---
+      # --- PHASE 3: POLICY ENFORCEMENT ---
+      
+      # The "Brain": Custom Python script that enforces the Quality Gate
       - name: Enforce Security Policy
         run: python security_gate.py --bandit bandit-report.json --safety safety-report.json
 
-
-      # --- DAST (ZAP) ---
+      # --- PHASE 4: DYNAMIC ANALYSIS (DAST) ---
+      
+      # Build and run the container so we can attack it
       - name: Build & Run App for DAST
         run: |
           docker build -t gatekeeper-test .
           docker run -d -p 5000:5000 --name test-container gatekeeper-test
-          sleep 10
+          sleep 10 # Wait for Flask to start
 
+      # Attack the running app with OWASP ZAP
       - name: DAST Scan (OWASP ZAP)
         uses: zaproxy/action-baseline@v0.9.0
         with:
           target: 'http://localhost:5000'
           rules_file_name: '.zap/rules.tsv'
-          cmd_options: '-a'
-          # We prevent ZAP from failing the build itself, so we can see reports
-          fail_action: false 
+          cmd_options: '-a' # Attack mode
+          fail_action: false # Allow build to proceed to reporting even if ZAP finds issues
 
-      # --- REPORTING ---
+      # --- PHASE 5: REPORTING & NOTIFICATIONS ---
+
       - name: Upload All Reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -64,3 +71,40 @@ jobs:
             bandit-report.json
             safety-report.json
             zap_report.html
+
+      # NOTIFICATION 1: Discord (Easy setup for Personal/Demo use)
+      # Trigger: Only runs if 'DISCORD_WEBHOOK' secret is set
+      - name: Notify Discord
+        if: always() && secrets.DISCORD_WEBHOOK != ''
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          title: "🛡️ Gatekeeper Security Report"
+          description: |
+            **Status:** ${{ job.status }}
+            **Branch:** ${{ github.ref_name }}
+            
+            [View Full Report](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          color: ${{ job.status == 'success' && '0x00ff00' || '0xff0000' }}
+
+      # NOTIFICATION 2: Microsoft Teams (Enterprise Standard)
+      # Trigger: Only runs if 'TEAMS_WEBHOOK' secret is set
+      - name: Notify MS Teams
+        if: always() && secrets.TEAMS_WEBHOOK != ''
+        run: |
+          curl -H "Content-Type: application/json" -d '{
+            "type": "message",
+            "attachments": [{
+              "contentType": "application/vnd.microsoft.card.adaptive",
+              "content": {
+                "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                "type": "AdaptiveCard",
+                "version": "1.2",
+                "body": [
+                  { "type": "TextBlock", "text": "🛡️ Gatekeeper Scan: ${{ job.status }}", "weight": "Bolder", "size": "Large" },
+                  { "type": "TextBlock", "text": "Branch: ${{ github.ref_name }}" },
+                  { "type": "TextBlock", "text": "Check GitHub Actions for detailed evidence." }
+                ]
+              }
+            }]
+          }' "${{ secrets.TEAMS_WEBHOOK }}"
