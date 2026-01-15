@@ -7,6 +7,7 @@ import json
 import os
 from datetime import datetime
 
+
 def load_bandit_report():
     """Parse Bandit SAST results with full details."""
     try:
@@ -30,6 +31,7 @@ def load_bandit_report():
         print(f"[DEBUG] Bandit error: {e}")
         return {'high': 0, 'medium': 0, 'low': 0, 'issues': [], 'total': 0}
 
+
 def get_bandit_remediation(test_id):
     """Provide specific remediation steps for Bandit findings."""
     remediation_map = {
@@ -48,30 +50,43 @@ def get_bandit_remediation(test_id):
     }
     return remediation_map.get(test_id, {'fix': 'Review code and apply security best practices', 'code': ''})
 
+
 def load_safety_report():
-    """Parse Safety SCA results - handles text+JSON mixed output."""
+    """Parse Safety SCA results - extracts JSON from mixed text output."""
     try:
         if not os.path.exists('safety-report.json'):
             print("[WARNING] safety-report.json not found")
             return {'count': 0, 'vulns': [], 'total_packages': {}}
             
         with open('safety-report.json', 'r') as f:
-            lines = f.readlines()
+            content = f.read()
         
-        # Find the first line that starts with '{'
-        json_content = None
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            if stripped.startswith('{'):
-                # Join from this line onwards
-                json_content = ''.join(lines[i:])
-                break
-        
-        if not json_content:
+        # Find the JSON object boundaries
+        start = content.find('{')
+        if start == -1:
             print("[WARNING] No JSON found in Safety report")
             return {'count': 0, 'vulns': [], 'total_packages': {}}
         
+        # Find the matching closing brace by counting braces
+        brace_count = 0
+        end = start
+        for i in range(start, len(content)):
+            if content[i] == '{':
+                brace_count += 1
+            elif content[i] == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    end = i + 1
+                    break
+        
+        if brace_count != 0:
+            print("[WARNING] Malformed JSON in Safety report")
+            return {'count': 0, 'vulns': [], 'total_packages': {}}
+        
+        json_content = content[start:end]
         data = json.loads(json_content)
+        
+        # Safety 3.x format
         vulns_array = data.get('vulnerabilities', [])
         
         print(f"[DEBUG] Safety found {len(vulns_array)} vulnerabilities")
@@ -108,7 +123,6 @@ def load_safety_report():
         import traceback
         traceback.print_exc()
         return {'count': 0, 'vulns': [], 'total_packages': {}}
-
 
 
 def load_zap_report():
@@ -148,6 +162,7 @@ def load_zap_report():
     except Exception as e:
         print(f"[DEBUG] ZAP error: {e}")
         return {'alerts': [], 'counts': {'High': 0, 'Medium': 0, 'Low': 0, 'Informational': 0}, 'total': 0}
+
 
 def generate_vulnerability_cards(bandit, safety, zap):
     """Generate detailed HTML cards with code snippets."""
@@ -197,7 +212,7 @@ def generate_vulnerability_cards(bandit, safety, zap):
         </div>
         """
     
-    # Safety CVEs - keep existing code
+    # Safety CVEs with Fix Commands
     for vuln in safety['vulns'][:10]:
         cards_html += f"""
         <div class="vuln-card severity-high">
@@ -228,7 +243,7 @@ def generate_vulnerability_cards(bandit, safety, zap):
         </div>
         """
     
-    # ZAP code stays the same...
+    # ZAP Alerts with URLs
     for alert in zap['alerts'][:10]:
         cards_html += f"""
         <div class="vuln-card severity-{alert['risk'].lower()}">
@@ -310,7 +325,7 @@ def generate_html_dashboard(simulate_complex=False):
             padding: 20px;
         }}
         .container {{
-                        max-width: 1400px;
+            max-width: 1400px;
             margin: 0 auto;
             background: white;
             border-radius: 12px;
@@ -318,7 +333,7 @@ def generate_html_dashboard(simulate_complex=False):
             overflow: hidden;
         }}
         .header {{
-            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+                        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
             color: white;
             padding: 30px;
             text-align: center;
@@ -578,6 +593,7 @@ def generate_html_dashboard(simulate_complex=False):
     print(f"   - High: {total_high}")
     print(f"   - Medium: {total_medium}")
     print("=" * 70)
+
 
 if __name__ == "__main__":
     generate_html_dashboard()
