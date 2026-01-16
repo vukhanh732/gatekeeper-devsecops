@@ -1,0 +1,28 @@
+name: 'Gatekeeper Security Scan'
+description: 'Automated DevSecOps pipeline with SAST, SCA, and DAST'
+author: 'Vu Luu'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Run Security Scans
+      shell: bash
+      run: |
+        pip install bandit safety
+        bandit -r . -f json -o bandit-report.json || true
+        safety check --json > safety-report.json 2>&1 || true
+    
+    - name: Generate Dashboard
+      shell: bash
+      run: |
+        curl -sO https://raw.githubusercontent.com/vukhanh732/gatekeeper-devsecops/main/generate_security_dashboard.py
+        python generate_security_dashboard.py
+    
+    - name: Upload Dashboard
+      uses: actions/upload-artifact@v4
+      with:
+        name: security-dashboard
+        path: security-dashboard.html
