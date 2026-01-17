@@ -76,16 +76,6 @@ Tested on production code:
 
 **Zero Config** - Works on any Python project out of the box
 
-## For Interviews
-
-**What I built:**  
-A DevSecOps pipeline with custom Python policy engine that blocks deployments if HIGH severity vulnerabilities detected. Tested on flask-login (8k stars) with zero false positives.
-
-**Technical challenge:**  
-Safety outputs mixed text+JSON. Implemented brace-counting to extract clean JSON, making parser robust against format changes.
-
-**Business value:**  
-Catches vulnerabilities before production. Fixing a prod bug costs 100x more than in dev—saves $500k+/year for 10-person team.
 
 ## Project Files
 
