@@ -17,11 +17,11 @@ runs:
       env:
         REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
       run: |
-        rm -f bandit-report.json safety-report.json
+        rm -f bandit-report.json safety-report.json safety-scan.log
         test -f "$REQUIREMENTS_FILE"
         python -m pip install bandit 'safety>=3,<4'
         bandit -x .git,.venv,venv -r . -f json -o bandit-report.json || true
-        safety check --file "$REQUIREMENTS_FILE" --json > safety-report.json 2>&1 || true
+        safety check --file "$REQUIREMENTS_FILE" --save-json safety-report.json > safety-scan.log 2>&1 || true
     - name: Enforce security policy
       shell: bash
       run: python "$GITHUB_ACTION_PATH/security_gate.py" --bandit bandit-report.json --safety safety-report.json
@@ -38,3 +38,4 @@ runs:
           security-dashboard.html
           bandit-report.json
           safety-report.json
+          safety-scan.log

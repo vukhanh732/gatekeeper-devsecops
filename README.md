@@ -30,11 +30,13 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install bandit 'safety>=3,<4'
 bandit -r . -x .venv -f json -o bandit-report.json || true
-safety check --file requirements.txt --json > safety-report.json 2>&1 || true
+safety check --file requirements.txt --save-json safety-report.json > safety-scan.log 2>&1 || true
 python security_gate.py --bandit bandit-report.json --safety safety-report.json
 ```
 
 Scanner nonzero exits are retained as report evidence; **the gate's exit status must be enforced**. Safety may require authentication/API access. An authentication error blocks the decision rather than being replaced with an empty scan.
+
+The reusable action uses `--save-json` to keep the structured report separate from console notices and deprecation messages. Scanner console output remains in `safety-scan.log` for diagnosis. The older standalone workflow still captures mixed console output; unsupported trailing content is rejected rather than treated as a clean scan.
 
 Generate the report separately, including after a blocked decision:
 
