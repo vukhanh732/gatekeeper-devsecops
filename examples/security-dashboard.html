@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'">
+<title>Gatekeeper / Security evidence</title><style>
+*{box-sizing:border-box}body{margin:0;background:#edece6;color:#202e34;font:16px/1.6 system-ui,sans-serif}
+main{max-width:1180px;margin:auto;padding:50px 36px}header{border-top:5px solid #244954;padding:28px 0 32px;border-bottom:1px solid #b9c3c2}
+.eyebrow,.kind{font:12px/1.5 monospace;letter-spacing:.08em;color:#48616a}h1{font-size:clamp(32px,5vw,56px);line-height:1.1;letter-spacing:-2px;margin:16px 0}h2{font-size:25px;margin:38px 0 20px}h3{font-size:18px;margin:8px 0}
+.meta,.location{font-size:13px;color:#53676c}.status{display:inline-block;padding:8px 14px;border:1px solid currentColor;font:600 14px monospace}
+.blocked{color:#9b3b2d}.unknown{color:#7a5320}.passed{color:#246342}.sample{background:#f4e4bf;border:1px solid #c9a45f;padding:12px 16px;margin-bottom:24px}
+.scanners{display:grid;grid-template-columns:repeat(3,1fr);border-block:1px solid #b9c3c2}.scanner{padding:20px 24px 20px 0}.scanner p{margin-bottom:0;font-size:14px;overflow-wrap:anywhere}
+.findings{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.finding{background:#fafaf6;border:1px solid #c9d0cc;padding:24px;overflow-wrap:anywhere}.finding p{font-size:14px}pre{font:13px/1.7 monospace;white-space:pre-wrap;background:#e6ece8;padding:16px;overflow-wrap:anywhere}
+footer{border-top:1px solid #b9c3c2;margin-top:36px;padding-top:20px;font-size:13px;color:#53676c}
+@media(max-width:650px){main{padding:24px 20px}.scanners,.findings{grid-template-columns:1fr}.scanner{padding:16px 0;border-bottom:1px solid #ccd3cf}}
+</style></head><body><main>
+<aside class="sample">Demonstration data · Synthetic regression fixture</aside>
+<header><span class="eyebrow">GATEKEEPER / SECURITY EVIDENCE</span><h1>A build decision,<br>with the evidence attached.</h1>
+<p class="meta">Generated 2026-11-01 07:02 UTC</p><p class="status blocked">POLICY BLOCKED</p>
+<p>Block on any Bandit High finding or Safety vulnerability. Missing or invalid required reports block the decision.</p></header>
+<h2>Scan coverage</h2><div class="scanners"><section class="scanner"><h3>Bandit / code</h3><p>High 1 · Medium 0 · Low 0</p></section><section class="scanner"><h3>Safety / dependencies</h3><p>1 findings, including ignored vulnerabilities</p></section><section class="scanner"><h3>ZAP / optional context</h3><p>Report unavailable. Not part of the blocking policy.</p></section></div>
+<h2>Findings to investigate</h2><div class="findings"><article class="finding"><span class="kind">SAST · HIGH</span><h3>flask_debug_true</h3><p class="location">demo/app.py:12</p><p>Synthetic finding: debug mode is enabled in the demonstration application.</p><pre>app.run(debug=True)</pre></article>
+<article class="finding"><span class="kind">DEPENDENCY</span><h3>example-package</h3><p class="location">Analysed version: 1.0</p><p>Synthetic dependency finding for the report demonstration. This is not a real package vulnerability advisory. Review the advisory and select a compatible patched release; no universal upgrade version is assumed.</p></article></div>
+<footer>Gatekeeper DevSecOps · This report records scanner evidence, not a guarantee of security. At most 20 details per scanner are shown; full counts and evidence remain in the JSON artifacts.</footer>
+</main></body></html>

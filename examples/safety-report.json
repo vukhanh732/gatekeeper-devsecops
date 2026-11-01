@@ -1,0 +1,1 @@
+{"report_meta":{"vulnerabilities_found":1,"scan_target":"synthetic fixture"},"scanned_packages":{"example-package":{"version":"1.0"}},"vulnerabilities":[{"package_name":"example-package","analyzed_version":"1.0","advisory":"Synthetic dependency finding for the report demonstration. This is not a real package vulnerability advisory."}],"ignored_vulnerabilities":[]}

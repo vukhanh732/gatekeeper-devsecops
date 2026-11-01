@@ -1,103 +1,77 @@
-# 🛡️ Gatekeeper - DevSecOps Pipeline
+# Gatekeeper
 
-Automated security scanning that blocks vulnerable code before deployment.
+A Python security policy gate that turns scanner reports into an explicit build decision and a readable HTML evidence report.
 
-![Python](https://img.shields.io/badge/python-3.9+-blue)
-![Test Status](https://img.shields.io/badge/tested%20on-flask--login-success)
+[Case study](https://security-vu.netlify.app/gatekeeper.html) · [Policy implementation](security_gate.py) · [Reusable action](action.yml) · [Demonstration report](examples/security-dashboard.html)
 
-## What It Does
+## Policy
 
-Scans your code with 3 tools and blocks deployment if critical issues found:
+| Evidence | Decision |
+| --- | --- |
+| Any Bandit High finding | Block, exit `1` |
+| Any Safety vulnerability, including ignored findings | Block, exit `1` |
+| Missing, malformed or error reports | Block, exit `2` |
+| Bandit Medium / Low only | Pass, with findings visible |
+| Valid required reports with no blocking findings | Pass, exit `0` |
+| OWASP ZAP | Optional report context; does not decide this gate |
 
-- **Bandit** finds hardcoded secrets, SQL injection, eval()
-- **Safety** detects vulnerable dependencies (CVEs)  
-- **OWASP ZAP** attacks your running app to find XSS
+Bandit findings are counted directly and checked against reported severity totals. Safety JSON must include completed scan metadata and scanned-package evidence. The old workflow fallback `{"vulnerabilities": []}` is rejected, so a scanner failure cannot establish a clean result.
 
-## Quick Start
+The parser supports the `safety check --json` report shape with `report_meta` (or compatible `meta`), `scanned_packages` and `vulnerabilities`. It does not support every newer `safety scan` output schema; unsupported formats fail closed. See [Safety output documentation](https://docs.safetycli.com/safety-2/safety-cli-2-scanner/output-formats).
 
-### Option 1: One-Line Setup
+## Run locally
 
-Create `.github/workflows/security.yml` in your repo:
+Python 3.10+:
 
-    name: Security Scan
-    on: [push, pull_request]
-    
-    jobs:
-      scan:
-        runs-on: ubuntu-latest
-        steps:
-          - uses: actions/checkout@v3
-          - uses: actions/setup-python@v4
-            with:
-              python-version: '3.9'
-          - name: Run Gatekeeper
-            run: |
-              pip install bandit safety
-              bandit -r . -f json -o bandit-report.json || true
-              safety check --json > safety-report.json 2>&1 || true
-              curl -sO https://raw.githubusercontent.com/vukhanh732/gatekeeper-devsecops/main/generate_security_dashboard.py
-              python generate_security_dashboard.py
-          - uses: actions/upload-artifact@v4
-            if: always()
-            with:
-              name: security-dashboard
-              path: security-dashboard.html
+```bash
+git clone https://github.com/vukhanh732/gatekeeper-devsecops.git
+cd gatekeeper-devsecops
+python3 -m venv .venv
+. .venv/bin/activate
+pip install bandit 'safety>=3,<4'
+bandit -r . -x .venv -f json -o bandit-report.json || true
+safety check --file requirements.txt --json > safety-report.json 2>&1 || true
+python security_gate.py --bandit bandit-report.json --safety safety-report.json
+```
 
-View results: Actions tab → Artifacts → download `security-dashboard.html`
+Scanner nonzero exits are retained as report evidence; **the gate's exit status must be enforced**. Safety may require authentication/API access. An authentication error blocks the decision rather than being replaced with an empty scan.
 
-### Option 2: Test Locally
+Generate the report separately, including after a blocked decision:
 
-    git clone https://github.com/vukhanh732/gatekeeper-devsecops.git
-    cd gatekeeper-devsecops
-    pip install bandit safety
-    bandit -r . -f json -o bandit-report.json
-    safety check --json > safety-report.json 2>&1
-    python generate_security_dashboard.py
-    # Open security-dashboard.html in browser
+```bash
+python generate_security_dashboard.py
+```
 
-## Real Results
+Open `security-dashboard.html`. Missing required evidence is visibly marked **SCAN INCOMPLETE**. Report fields are escaped and the HTML has no scripts. Suggested remediation requires reviewing the actual advisory; no universal patched version is invented.
 
-Tested on production code:
+## Use in GitHub Actions
 
-| Project | HIGH Issues | Result |
-|---------|-------------|--------|
-| flask-login | 0 | ✅ PASS |
-| gatekeeper-demo | 1 | ❌ FAIL |
+After checkout and Python setup, use `vukhanh732/gatekeeper-devsecops@main` as a composite action with `requirements-file: requirements.txt` (or the target file). For a stable integration, pin it to a reviewed commit SHA. Supply any required Safety credentials through the job environment.
 
-**Why flask-login passed:** Found 12 hardcoded secrets but all in test files (LOW severity). Pipeline correctly distinguished test code from production vulnerabilities.
+The action scans the caller checkout and declared requirements file, runs the bundled policy script, then generates and uploads the report even if the gate fails. It does not fetch executable Python from a mutable raw URL. It does not start or scan a running web app.
 
-## Features
+The repository's existing standalone workflow also calls the hardened gate, but its later DAST steps are skipped when the blocking gate fails. Its legacy empty-report fallback is now rejected by the parser.
 
-**Interactive Dashboard** - Shows vulnerable code snippets, CVE IDs, and copy-paste fix commands
+## Demonstration fixture
 
-**Policy Engine** - Blocks HIGH severity, warns on MEDIUM, allows LOW
+[`examples/`](examples/) contains synthetic Bandit/Safety findings and an HTML report with a visible **Demonstration data** banner. It illustrates a blocked build, not a current scan of production software.
 
-**ChatOps Ready** - Add Discord/Teams webhooks for build notifications
+Rebuild it without scanner accounts:
 
-**Zero Config** - Works on any Python project out of the box
+```bash
+(cd examples && python ../generate_security_dashboard.py --sample-label 'Synthetic regression fixture')
+```
 
+## Verify
 
-## Project Files
+```bash
+python3 -m unittest discover -s tests -v
+```
 
-- `.github/workflows/security-pipeline.yml` - The automation
-- `security_gate.py` - Enforces blocking rules
-- `generate_security_dashboard.py` - Creates HTML report
-- `app.py` - Demo vulnerable Flask app
+Tests exercise clean/blocked decisions, findings without metrics, ignored vulnerabilities, scanner errors, the legacy fabricated fallback, mixed notice/JSON output, and HTML escaping.
 
-## Optional: Add Notifications
+`app.py` and its old Flask requirements are a deliberately vulnerable scanner target. Do not deploy that demo as a public application. A failing pipeline can be the expected policy outcome; it is not evidence of a successful production deployment.
 
-Get alerts when builds fail:
+## Limits
 
-1. Create Discord webhook
-2. GitHub Settings → Secrets → Add `DISCORD_WEBHOOK`
-3. Pipeline auto-detects and sends notifications
-
-## License & Contact
-
-MIT License
-
-Built by Vu Luu  
-Email: vukhanhluu@gmail.com  
-LinkedIn: linkedin.com/in/vukhanhluu
-
-PRs welcome for new tools or language support.
+This is an educational CI integration. Report validation cannot prove that an upstream scanner is trustworthy or complete. No organization-wide rollout, universal vulnerability coverage or measured business impact is claimed.

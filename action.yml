@@ -1,28 +1,40 @@
-name: 'Gatekeeper Security Scan'
-description: 'Automated DevSecOps pipeline with SAST, SCA, and DAST'
-author: 'Vu Luu'
+name: Gatekeeper Security Scan
+description: Fail-closed Bandit and Safety report gate with an HTML evidence artifact
+author: Vu Luu
 branding:
-  icon: 'shield'
-  color: 'blue'
-
+  icon: shield
+  color: blue
+inputs:
+  requirements-file:
+    description: Requirements file to scan, relative to the caller checkout
+    required: false
+    default: requirements.txt
 runs:
-  using: 'composite'
+  using: composite
   steps:
-    - name: Run Security Scans
+    - name: Run scanners
       shell: bash
+      env:
+        REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
       run: |
-        pip install bandit safety
-        bandit -r . -f json -o bandit-report.json || true
-        safety check --json > safety-report.json 2>&1 || true
-    
-    - name: Generate Dashboard
+        rm -f bandit-report.json safety-report.json
+        test -f "$REQUIREMENTS_FILE"
+        python -m pip install bandit 'safety>=3,<4'
+        bandit -x .git,.venv,venv -r . -f json -o bandit-report.json || true
+        safety check --file "$REQUIREMENTS_FILE" --json > safety-report.json 2>&1 || true
+    - name: Enforce security policy
       shell: bash
-      run: |
-        curl -sO https://raw.githubusercontent.com/vukhanh732/gatekeeper-devsecops/main/generate_security_dashboard.py
-        python generate_security_dashboard.py
-    
-    - name: Upload Dashboard
+      run: python "$GITHUB_ACTION_PATH/security_gate.py" --bandit bandit-report.json --safety safety-report.json
+    - name: Generate dashboard
+      if: always()
+      shell: bash
+      run: python "$GITHUB_ACTION_PATH/generate_security_dashboard.py"
+    - name: Upload evidence
+      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: security-dashboard
-        path: security-dashboard.html
+        path: |
+          security-dashboard.html
+          bandit-report.json
+          safety-report.json

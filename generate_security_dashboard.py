@@ -1,600 +1,121 @@
 #!/usr/bin/env python3
-"""
-Enterprise Security Dashboard Generator
-Provides detailed remediation guidance for all vulnerabilities.
-"""
+"""Render scanner evidence as a standalone, script-free HTML report."""
+import argparse
+from datetime import datetime, timezone
+from html import escape
 import json
-import os
-from datetime import datetime
+from pathlib import Path
+from report_io import ReportError, load_report, bandit_counts, safety_count
 
 
 def load_bandit_report():
-    """Parse Bandit SAST results with full details."""
     try:
-        with open('bandit-report.json', 'r') as f:
-            data = json.load(f)
-            metrics = data.get('metrics', {}).get('_totals', {})
-            results = data.get('results', [])
-            
-            # Enrich with remediation info
-            for issue in results:
-                issue['remediation'] = get_bandit_remediation(issue.get('test_id'))
-            
-            return {
-                'high': metrics.get('SEVERITY.HIGH', 0),
-                'medium': metrics.get('SEVERITY.MEDIUM', 0),
-                'low': metrics.get('SEVERITY.LOW', 0),
-                'issues': results,
-                'total': len(results)
-            }
-    except Exception as e:
-        print(f"[DEBUG] Bandit error: {e}")
-        return {'high': 0, 'medium': 0, 'low': 0, 'issues': [], 'total': 0}
-
-
-def get_bandit_remediation(test_id):
-    """Provide specific remediation steps for Bandit findings."""
-    remediation_map = {
-        'B201': {
-            'fix': 'Set debug=False in production or use environment variables',
-            'code': 'app.run(debug=False)  # or debug=os.getenv("DEBUG", "False") == "True"'
-        },
-        'B608': {
-            'fix': 'Use parameterized queries instead of string concatenation',
-            'code': 'cursor.execute("SELECT * FROM users WHERE name = ?", (query,))'
-        },
-        'B105': {
-            'fix': 'Store secrets in environment variables or a secrets manager',
-            'code': 'API_KEY = os.getenv("API_KEY")'
-        }
-    }
-    return remediation_map.get(test_id, {'fix': 'Review code and apply security best practices', 'code': ''})
+        data = load_report('bandit-report.json', 'Bandit')
+        counts = bandit_counts(data)
+        return {**{k.lower(): v for k, v in counts.items()}, 'issues': data['results'], 'error': None}
+    except ReportError as exc:
+        return {'high': 0, 'medium': 0, 'low': 0, 'issues': [], 'error': str(exc)}
 
 
 def load_safety_report():
-    """Parse Safety SCA results - extracts JSON from mixed text output."""
     try:
-        if not os.path.exists('safety-report.json'):
-            print("[WARNING] safety-report.json not found")
-            return {'count': 0, 'vulns': [], 'total_packages': {}}
-            
-        with open('safety-report.json', 'r') as f:
-            content = f.read()
-        
-        # Find the JSON object boundaries
-        start = content.find('{')
-        if start == -1:
-            print("[WARNING] No JSON found in Safety report")
-            return {'count': 0, 'vulns': [], 'total_packages': {}}
-        
-        # Find the matching closing brace by counting braces
-        brace_count = 0
-        end = start
-        for i in range(start, len(content)):
-            if content[i] == '{':
-                brace_count += 1
-            elif content[i] == '}':
-                brace_count -= 1
-                if brace_count == 0:
-                    end = i + 1
-                    break
-        
-        if brace_count != 0:
-            print("[WARNING] Malformed JSON in Safety report")
-            return {'count': 0, 'vulns': [], 'total_packages': {}}
-        
-        json_content = content[start:end]
-        data = json.loads(json_content)
-        
-        # Safety 3.x format
-        vulns_array = data.get('vulnerabilities', [])
-        
-        print(f"[DEBUG] Safety found {len(vulns_array)} vulnerabilities")
-        
-        cve_list = []
-        for v in vulns_array:
-            cve_obj = v.get('CVE', {})
-            cve_id = cve_obj.get('CVE', 'No CVE') if isinstance(cve_obj, dict) else 'No CVE'
-            
-            pkg_name = v.get('package_name', 'Unknown')
-            current_ver = v.get('analyzed_version', 'N/A')
-            advisory_text = v.get('advisory', 'No advisory')
-            
-            if len(advisory_text) > 250:
-                advisory_text = advisory_text[:250] + '...'
-            
-            cve_list.append({
-                'package': pkg_name,
-                'version': current_ver,
-                'cve': cve_id,
-                'advisory': advisory_text,
-                'fix_command': f'pip install --upgrade {pkg_name}>=3.0',
-                'file': 'requirements.txt'
-            })
-        
-        return {
-            'count': len(cve_list),
-            'vulns': cve_list,
-            'total_packages': data.get('scanned_packages', {})
-        }
-        
-    except Exception as e:
-        print(f"[ERROR] Safety parsing failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return {'count': 0, 'vulns': [], 'total_packages': {}}
+        data = load_report('safety-report.json', 'Safety')
+        count = safety_count(data)
+        return {'count': count, 'vulns': data['vulnerabilities'] + data.get('ignored_vulnerabilities', []), 'error': None}
+    except ReportError as exc:
+        return {'count': 0, 'vulns': [], 'error': str(exc)}
 
 
 def load_zap_report():
-    """Parse ZAP DAST results with detailed remediation."""
+    """ZAP is optional context; it is not an input to the blocking policy."""
     try:
-        with open('zap_report.json', 'r') as f:
-            data = json.load(f)
-            site = data.get('site', [{}])[0]
-            alerts = site.get('alerts', [])
-            
-            risk_counts = {'High': 0, 'Medium': 0, 'Low': 0, 'Informational': 0}
-            detailed_alerts = []
-            
-            for alert in alerts:
-                risk_desc = alert.get('riskdesc', 'Informational')
-                risk = risk_desc.split()[0] if ' ' in risk_desc else risk_desc
-                risk_counts[risk] = risk_counts.get(risk, 0) + 1
-                
-                instances = alert.get('instances', [])
-                affected_urls = [inst.get('uri', 'Unknown URL') for inst in instances[:3]]
-                
-                detailed_alerts.append({
-                    'name': alert.get('name', 'Unknown'),
-                    'risk': risk,
-                    'desc': alert.get('desc', 'No description')[:200] + '...',
-                    'solution': alert.get('solution', 'No solution')[:300] + '...',
-                    'reference': alert.get('reference', ''),
-                    'cwe_id': alert.get('cweid', 'N/A'),
-                    'urls': affected_urls
-                })
-                
-            return {
-                'alerts': detailed_alerts,
-                'counts': risk_counts,
-                'total': len(alerts)
-            }
-    except Exception as e:
-        print(f"[DEBUG] ZAP error: {e}")
-        return {'alerts': [], 'counts': {'High': 0, 'Medium': 0, 'Low': 0, 'Informational': 0}, 'total': 0}
+        data = json.loads(Path('zap_report.json').read_text(encoding='utf-8'))
+        sites = data['site']
+        if not isinstance(sites, list):
+            raise ValueError('site must be an array')
+        alerts = []
+        for site in sites:
+            if not isinstance(site, dict) or not isinstance(site.get('alerts'), list):
+                raise ValueError('invalid site alerts')
+            for alert in site['alerts']:
+                if not isinstance(alert, dict):
+                    raise ValueError('invalid alert')
+                alerts.append(alert)
+        return {'alerts': alerts, 'error': None}
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError) as exc:
+        return {'alerts': [], 'error': str(exc)}
+
+
+def text(value):
+    return escape(str(value), quote=True)
 
 
 def generate_vulnerability_cards(bandit, safety, zap):
-    """Generate detailed HTML cards with code snippets."""
-    cards_html = ""
-    
-    # Bandit Issues with CODE SNIPPETS
-    for issue in bandit['issues'][:10]:
-        severity = issue.get('issue_severity', 'MEDIUM').lower()
-        remediation = issue.get('remediation', {})
-        
-        # Extract the vulnerable code
-        vulnerable_code = issue.get('code', 'Code not available')
-        
-        cards_html += f"""
-        <div class="vuln-card severity-{severity}">
-            <div class="vuln-header">
-                <span class="vuln-type">SAST</span>
-                <span class="severity-badge {severity}">{issue.get('issue_severity', 'MEDIUM')}</span>
-            </div>
-            <h4>{issue.get('test_name', 'Unknown Issue').replace('_', ' ').title()}</h4>
-            
-            <div class="vuln-section">
-                <strong>📍 Location:</strong>
-                de>{issue.get('filename', 'N/A')}:{issue.get('line_number', '?')}</code>
-            </div>
-            
-            <div class="vuln-section">
-                <strong>💻 Vulnerable Code:</strong>
-                <pre style="background: #fff3cd; color: #856404; padding: 10px; border-left: 3px solid #ffc107;">{vulnerable_code.strip()}</pre>
-            </div>
-            
-            <div class="vuln-section">
-                <strong>⚠️ Issue:</strong>
-                <p>{issue.get('issue_text', 'No description')}</p>
-            </div>
-            
-            <div class="vuln-section">
-                <strong>🔧 How to Fix:</strong>
-                <p>{remediation.get('fix', 'Apply security best practices')}</p>
-                {'<pre style="background: #d4edda; color: #155724; padding: 10px; border-left: 3px solid #28a745;">' + remediation.get('code', '') + '</pre>' if remediation.get('code') else ''}
-            </div>
-            
-            <div class="vuln-section">
-                <strong>🔗 Reference:</strong>
-                <a href="https://bandit.readthedocs.io/en/latest/plugins/{issue.get('test_id', '').lower()}_{'_'.join(issue.get('test_name', '').split('_'))}.html" target="_blank">Bandit Documentation</a>
-            </div>
-        </div>
-        """
-    
-    # Safety CVEs with Fix Commands
-    for vuln in safety['vulns'][:10]:
-        cards_html += f"""
-        <div class="vuln-card severity-high">
-            <div class="vuln-header">
-                <span class="vuln-type">SCA</span>
-                <span class="severity-badge high">CVE</span>
-            </div>
-            <h4>{vuln['cve']}: {vuln['package']}</h4>
-            
-            <div class="vuln-section">
-                <strong>📦 Package:</strong> {vuln['package']} v{vuln['version']}
-            </div>
-            
-            <div class="vuln-section">
-                <strong>📍 Found in:</strong> de>{vuln['file']}</code>
-            </div>
-            
-            <div class="vuln-section">
-                <strong>⚠️ Vulnerability:</strong>
-                <p>{vuln['advisory']}</p>
-            </div>
-            
-            <div class="vuln-section">
-                <strong>🔧 Fix Command:</strong>
-                <pre style="background: #212529; color: #00ff00;">{vuln['fix_command']}</pre>
-                <p style="font-size: 0.85em; color: #6c757d;">Run this command to upgrade to a secure version</p>
-            </div>
-        </div>
-        """
-    
-    # ZAP Alerts with URLs
-    for alert in zap['alerts'][:10]:
-        cards_html += f"""
-        <div class="vuln-card severity-{alert['risk'].lower()}">
-            <div class="vuln-header">
-                <span class="vuln-type">DAST</span>
-                <span class="severity-badge {alert['risk'].lower()}">{alert['risk']}</span>
-            </div>
-            <h4>{alert['name']}</h4>
-            
-            <div class="vuln-section">
-                <strong>🌐 Affected URLs:</strong>
-                {''.join([f'<div>de>{url}</code></div>' for url in alert['urls'][:3]])}
-            </div>
-            
-            <div class="vuln-section">
-                <strong>⚠️ Description:</strong>
-                <p>{alert['desc']}</p>
-            </div>
-            
-            <div class="vuln-section">
-                <strong>🔧 Remediation:</strong>
-                <p>{alert['solution']}</p>
-            </div>
-            
-            <div class="vuln-section">
-                <strong>🔗 CWE ID:</strong> {alert['cwe_id']}
-            </div>
-        </div>
-        """
-    
-    return cards_html if cards_html else '<p style="text-align:center; color: #28a745;">✅ No detailed findings to display</p>'
+    cards = []
+    def card(kind, title, location, description, code=''):
+        cards.append(f'<article class="finding"><span class="kind">{text(kind)}</span>'
+                     f'<h3>{text(title)}</h3><p class="location">{text(location)}</p>'
+                     f'<p>{text(description)}</p>' + (f'<pre>{text(code)}</pre>' if code else '') + '</article>')
+    for issue in bandit['issues'][:20]:
+        card('SAST · ' + str(issue.get('issue_severity', 'unknown')), issue.get('test_name', 'Code finding'),
+             f"{issue.get('filename', 'unknown')}:{issue.get('line_number', '?')}",
+             issue.get('issue_text', ''), issue.get('code', ''))
+    for issue in safety['vulns'][:20]:
+        card('DEPENDENCY', issue.get('package_name', 'Unknown package'),
+             'Analysed version: ' + str(issue.get('analyzed_version', 'unknown')),
+             str(issue.get('advisory', 'Review the scanner advisory.')) +
+             ' Review the advisory and select a compatible patched release; no universal upgrade version is assumed.')
+    for alert in zap['alerts'][:20]:
+        card('DAST · INFORMATIONAL TO POLICY', alert.get('name', 'ZAP alert'),
+             alert.get('riskdesc', 'Unspecified risk'),
+             str(alert.get('desc', '')) + '\n' + str(alert.get('solution', '')))
+    return '\n'.join(cards) or '<p>No detailed findings available. Check scan availability above.</p>'
 
 
-def generate_html_dashboard(simulate_complex=False):
-    """Generate enterprise dashboard with full remediation guidance."""
-    
-    bandit = load_bandit_report()
-    safety = load_safety_report()
-    zap = load_zap_report()
-    
-    if simulate_complex or os.getenv('SIMULATE_COMPLEX_APP') == 'true':
-        bandit['high'] = 12
-        bandit['medium'] = 28
-        safety['count'] = 37
-        zap['counts'] = {'High': 8, 'Medium': 22, 'Low': 31, 'Informational': 15}
-    
-    total_critical = bandit['high'] + zap['counts'].get('High', 0)
-    total_high = bandit['medium'] + zap['counts'].get('Medium', 0)
-    total_medium = bandit['low'] + zap['counts'].get('Low', 0) + safety['count']
-    total_findings = total_critical + total_high + total_medium
-    
-    if total_critical > 0:
-        status = "CRITICAL"
-        status_color = "#dc3545"
-    elif total_high > 0:
-        status = "HIGH RISK"
-        status_color = "#fd7e14"
-    elif total_medium > 0:
-        status = "MEDIUM RISK"
-        status_color = "#ffc107"
+def generate_html_dashboard(label=None):
+    bandit, safety, zap = load_bandit_report(), load_safety_report(), load_zap_report()
+    if bandit['error'] or safety['error']:
+        status, state = 'SCAN INCOMPLETE', 'unknown'
+    elif bandit['high'] or safety['count']:
+        status, state = 'POLICY BLOCKED', 'blocked'
     else:
-        status = "SECURE"
-        status_color = "#28a745"
-    
-    vuln_cards = generate_vulnerability_cards(bandit, safety, zap)
-    
-    html = f"""
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gatekeeper Security Dashboard</title>
-    <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 20px;
-        }}
-        .container {{
-            max-width: 1400px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-            overflow: hidden;
-        }}
-        .header {{
-                        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-            color: white;
-            padding: 30px;
-            text-align: center;
-        }}
-        .header h1 {{
-            font-size: 2.5em;
-            margin-bottom: 10px;
-        }}
-        .header .timestamp {{
-            opacity: 0.9;
-            font-size: 0.9em;
-        }}
-        .status-badge {{
-            display: inline-block;
-            background: {status_color};
-            color: white;
-            padding: 10px 30px;
-            border-radius: 25px;
-            font-weight: bold;
-            margin-top: 15px;
-            font-size: 1.2em;
-        }}
-        .metrics {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            padding: 30px;
-            background: #f8f9fa;
-        }}
-        .metric-card {{
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            text-align: center;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            transition: transform 0.2s;
-        }}
-        .metric-card:hover {{
-            transform: translateY(-5px);
-        }}
-        .metric-card .number {{
-            font-size: 3em;
-            font-weight: bold;
-            margin: 10px 0;
-        }}
-        .metric-card .label {{
-            color: #6c757d;
-            text-transform: uppercase;
-            font-size: 0.85em;
-            letter-spacing: 1px;
-        }}
-        .critical {{ color: #dc3545; }}
-        .high {{ color: #fd7e14; }}
-        .medium {{ color: #ffc107; }}
-        .low {{ color: #28a745; }}
-        .section {{
-            padding: 30px;
-        }}
-        .section h2 {{
-            color: #1e3c72;
-            margin-bottom: 20px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #667eea;
-        }}
-        .tool-result {{
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            border-left: 4px solid #667eea;
-        }}
-        .tool-result h3 {{
-            color: #2a5298;
-            margin-bottom: 10px;
-        }}
-        .vuln-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-            gap: 20px;
-            margin-top: 20px;
-        }}
-        .vuln-card {{
-            background: white;
-            border-radius: 8px;
-            padding: 20px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            border-left: 4px solid #667eea;
-        }}
-        .vuln-card.severity-high {{
-            border-left-color: #dc3545;
-        }}
-        .vuln-card.severity-medium {{
-            border-left-color: #fd7e14;
-        }}
-        .vuln-card.severity-low {{
-            border-left-color: #ffc107;
-        }}
-        .vuln-header {{
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 15px;
-        }}
-        .vuln-type {{
-            background: #667eea;
-            color: white;
-            padding: 3px 10px;
-            border-radius: 4px;
-            font-size: 0.8em;
-            font-weight: bold;
-        }}
-        .severity-badge {{
-            padding: 3px 10px;
-            border-radius: 4px;
-            font-size: 0.8em;
-            font-weight: bold;
-            color: white;
-        }}
-        .severity-badge.high {{
-            background: #dc3545;
-        }}
-        .severity-badge.medium {{
-            background: #fd7e14;
-        }}
-        .severity-badge.low {{
-            background: #ffc107;
-        }}
-        .vuln-card h4 {{
-            color: #212529;
-            margin: 0 0 15px 0;
-            font-size: 1.1em;
-        }}
-        .vuln-section {{
-            margin: 15px 0;
-            padding: 10px;
-            background: #f8f9fa;
-            border-radius: 4px;
-        }}
-        .vuln-section strong {{
-            color: #2a5298;
-            display: block;
-            margin-bottom: 5px;
-        }}
-        .vuln-section p {{
-            color: #495057;
-            font-size: 0.9em;
-            line-height: 1.6;
-            margin: 5px 0;
-        }}
-        .vuln-section code {{
-            background: #e9ecef;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-family: 'Courier New', monospace;
-            font-size: 0.85em;
-        }}
-        .vuln-section pre {{
-            background: #212529;
-            color: #00ff00;
-            padding: 10px;
-            border-radius: 4px;
-            overflow-x: auto;
-            font-size: 0.85em;
-            margin-top: 5px;
-        }}
-        .vuln-section a {{
-            color: #667eea;
-            text-decoration: none;
-        }}
-        .vuln-section a:hover {{
-            text-decoration: underline;
-        }}
-        .footer {{
-            background: #212529;
-            color: white;
-            text-align: center;
-            padding: 20px;
-        }}
-        .footer p {{
-            margin: 5px 0;
-        }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🛡️ Gatekeeper Security Dashboard</h1>
-            <p class="timestamp">Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-            <div class="status-badge">{status}</div>
-        </div>
-        
-        <div class="metrics">
-            <div class="metric-card">
-                <div class="label">Critical Issues</div>
-                <div class="number critical">{total_critical}</div>
-            </div>
-            <div class="metric-card">
-                <div class="label">High Severity</div>
-                <div class="number high">{total_high}</div>
-            </div>
-            <div class="metric-card">
-                <div class="label">Medium Severity</div>
-                <div class="number medium">{total_medium}</div>
-            </div>
-            <div class="metric-card">
-                <div class="label">Total Findings</div>
-                <div class="number">{total_findings}</div>
-            </div>
-        </div>
-        
-        <div class="section">
-            <h2>📋 Scan Summary</h2>
-            
-            <div class="tool-result">
-                <h3>🔍 SAST Scan (Bandit)</h3>
-                <p><strong>High:</strong> {bandit['high']} | <strong>Medium:</strong> {bandit['medium']} | <strong>Low:</strong> {bandit['low']}</p>
-                {'<p style="color: #28a745; margin-top: 10px;">✅ No critical code vulnerabilities detected</p>' if bandit['high'] == 0 else '<p style="color: #dc3545; margin-top: 10px;">❌ Critical code issues found!</p>'}
-            </div>
-            
-            <div class="tool-result">
-                <h3>📦 SCA Scan (Safety)</h3>
-                <p><strong>Vulnerable Dependencies:</strong> {safety['count']}</p>
-                {'<p style="color: #28a745; margin-top: 10px;">✅ All dependencies are secure</p>' if safety['count'] == 0 else '<p style="color: #ffc107; margin-top: 10px;">⚠️ Dependencies with known CVEs detected - upgrade required</p>'}
-            </div>
-            
-            <div class="tool-result">
-                <h3>🎯 DAST Scan (OWASP ZAP)</h3>
-                <p><strong>High:</strong> {zap['counts']['High']} | <strong>Medium:</strong> {zap['counts']['Medium']} | <strong>Low:</strong> {zap['counts']['Low']}</p>
-                <p style="margin-top: 10px;"><strong>Total Alerts:</strong> {zap['total']}</p>
-            </div>
-        </div>
-        
-        <div class="section">
-            <h2>🔎 Detailed Vulnerability Analysis</h2>
-            <p style="margin-bottom: 20px; color: #6c757d;">Each finding includes location, description, and remediation guidance</p>
-            <div class="vuln-grid">
-                {vuln_cards}
-            </div>
-        </div>
-        
-        <div class="footer">
-            <p><strong>Generated by Gatekeeper DevSecOps Pipeline</strong></p>
-            <p style="margin-top: 5px; font-size: 0.9em;">© 2026 - Automated Security Scanning & Remediation</p>
-        </div>
-    </div>
-</body>
-</html>
-    """
-    
-    with open('security-dashboard.html', 'w') as f:
-        f.write(html)
-    
-    print("=" * 70)
-    print("✅ Enhanced Security Dashboard generated: security-dashboard.html")
-    print(f"📊 Status: {status}")
-    print(f"🔢 Total Findings: {total_findings}")
-    print(f"   - Critical: {total_critical}")
-    print(f"   - High: {total_high}")
-    print(f"   - Medium: {total_medium}")
-    print("=" * 70)
+        status, state = 'POLICY PASSED', 'passed'
+    def summary(name, error, description):
+        return f'<section class="scanner"><h3>{name}</h3><p>{text(error) if error else text(description)}</p></section>'
+    summaries = summary('Bandit / code', bandit['error'],
+                        f"High {bandit['high']} · Medium {bandit['medium']} · Low {bandit['low']}")
+    summaries += summary('Safety / dependencies', safety['error'], f"{safety['count']} findings, including ignored vulnerabilities")
+    summaries += summary('ZAP / optional context', zap['error'] and 'Report unavailable. Not part of the blocking policy.',
+                         f"{len(zap['alerts'])} alert types. Not part of the blocking policy.")
+    generated = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+    html = f'''<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'">
+<title>Gatekeeper / Security evidence</title><style>
+*{{box-sizing:border-box}}body{{margin:0;background:#edece6;color:#202e34;font:16px/1.6 system-ui,sans-serif}}
+main{{max-width:1180px;margin:auto;padding:50px 36px}}header{{border-top:5px solid #244954;padding:28px 0 32px;border-bottom:1px solid #b9c3c2}}
+.eyebrow,.kind{{font:12px/1.5 monospace;letter-spacing:.08em;color:#48616a}}h1{{font-size:clamp(32px,5vw,56px);line-height:1.1;letter-spacing:-2px;margin:16px 0}}h2{{font-size:25px;margin:38px 0 20px}}h3{{font-size:18px;margin:8px 0}}
+.meta,.location{{font-size:13px;color:#53676c}}.status{{display:inline-block;padding:8px 14px;border:1px solid currentColor;font:600 14px monospace}}
+.blocked{{color:#9b3b2d}}.unknown{{color:#7a5320}}.passed{{color:#246342}}.sample{{background:#f4e4bf;border:1px solid #c9a45f;padding:12px 16px;margin-bottom:24px}}
+.scanners{{display:grid;grid-template-columns:repeat(3,1fr);border-block:1px solid #b9c3c2}}.scanner{{padding:20px 24px 20px 0}}.scanner p{{margin-bottom:0;font-size:14px;overflow-wrap:anywhere}}
+.findings{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}}.finding{{background:#fafaf6;border:1px solid #c9d0cc;padding:24px;overflow-wrap:anywhere}}.finding p{{font-size:14px}}pre{{font:13px/1.7 monospace;white-space:pre-wrap;background:#e6ece8;padding:16px;overflow-wrap:anywhere}}
+footer{{border-top:1px solid #b9c3c2;margin-top:36px;padding-top:20px;font-size:13px;color:#53676c}}
+@media(max-width:650px){{main{{padding:24px 20px}}.scanners,.findings{{grid-template-columns:1fr}}.scanner{{padding:16px 0;border-bottom:1px solid #ccd3cf}}}}
+</style></head><body><main>
+{f'<aside class="sample">Demonstration data · {text(label)}</aside>' if label else ''}
+<header><span class="eyebrow">GATEKEEPER / SECURITY EVIDENCE</span><h1>A build decision,<br>with the evidence attached.</h1>
+<p class="meta">Generated {generated}</p><p class="status {state}">{status}</p>
+<p>Block on any Bandit High finding or Safety vulnerability. Missing or invalid required reports block the decision.</p></header>
+<h2>Scan coverage</h2><div class="scanners">{summaries}</div>
+<h2>Findings to investigate</h2><div class="findings">{generate_vulnerability_cards(bandit, safety, zap)}</div>
+<footer>Gatekeeper DevSecOps · This report records scanner evidence, not a guarantee of security. At most 20 details per scanner are shown; full counts and evidence remain in the JSON artifacts.</footer>
+</main></body></html>'''
+    Path('security-dashboard.html').write_text(html, encoding='utf-8')
+    print(f'{status}: security-dashboard.html')
+    return html
 
 
-if __name__ == "__main__":
-    generate_html_dashboard()
-
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--sample-label', help='Visible demonstration-data banner for fixture reports')
+    generate_html_dashboard(parser.parse_args().sample_label)

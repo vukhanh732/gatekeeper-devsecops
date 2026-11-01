@@ -1,0 +1,1 @@
+{"results":[{"issue_severity":"HIGH","test_name":"flask_debug_true","filename":"demo/app.py","line_number":12,"issue_text":"Synthetic finding: debug mode is enabled in the demonstration application.","code":"app.run(debug=True)"}],"metrics":{"_totals":{"SEVERITY.HIGH":1,"SEVERITY.MEDIUM":0,"SEVERITY.LOW":0}}}
