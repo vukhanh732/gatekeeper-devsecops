@@ -36,7 +36,7 @@ python security_gate.py --bandit bandit-report.json --safety safety-report.json
 
 Scanner nonzero exits are retained as report evidence; **the gate's exit status must be enforced**. Safety may require authentication/API access. An authentication error blocks the decision rather than being replaced with an empty scan.
 
-The reusable action uses `--save-json` to keep the structured report separate from console notices and deprecation messages. Scanner console output remains in `safety-scan.log` for diagnosis. The older standalone workflow still captures mixed console output; unsupported trailing content is rejected rather than treated as a clean scan.
+The reusable action uses `--save-json` to keep the structured report separate from console notices and deprecation messages. Scanner console output remains in `safety-scan.log` for diagnosis.
 
 Generate the report separately, including after a blocked decision:
 
@@ -52,13 +52,20 @@ After checkout and Python setup, use `vukhanh732/gatekeeper-devsecops@main` as a
 
 The action scans the caller checkout and declared requirements file, runs the bundled policy script, then generates and uploads the report even if the gate fails. It does not fetch executable Python from a mutable raw URL. It does not start or scan a running web app.
 
-The repository's existing standalone workflow also calls the hardened gate, but its later DAST steps are skipped when the blocking gate fails. Its legacy empty-report fallback is now rejected by the parser.
+The repository workflow separates a bounded policy demonstration from the authenticated full scan. Pushes, pull requests and manual runs execute the policy demonstration: unit tests, a live Bandit scan of the intentionally vulnerable `app.py`, and the checked-in synthetic Safety fixture. That job passes only when the gate correctly exits `1` and produces a labelled blocked report. A green policy-demo job means the gate behaved as expected; it does not mean the demo app passed a security scan. `workflow_dispatch` also runs the reusable action as a full scan and supplies `SAFETY_API_KEY` from repository secrets.
 
 ## Demonstration fixture
 
-[`examples/`](examples/) contains synthetic Bandit/Safety findings and an HTML report with a visible **Demonstration data** banner. It illustrates a blocked build, not a current scan of production software.
+[`examples/`](examples/) contains explicitly synthetic Bandit/Safety findings and an HTML report with a visible **Demonstration data** banner. It illustrates a blocked build, not a current scan of production software.
 
-Rebuild it without scanner accounts:
+Run the bounded offline demo (Bandit must be installed; no Safety account or network scan is used):
+
+```bash
+python -m pip install bandit
+python scripts/policy_demo.py
+```
+
+The command scans `app.py`, verifies a HIGH finding and the expected gate exit `1`, then checks that the generated HTML is labelled and blocked. Its temporary reports are removed on exit. To render only the checked-in synthetic report examples instead, run:
 
 ```bash
 (cd examples && python ../generate_security_dashboard.py --sample-label 'Synthetic regression fixture')
@@ -72,7 +79,7 @@ python3 -m unittest discover -s tests -v
 
 Tests exercise clean/blocked decisions, findings without metrics, ignored vulnerabilities, scanner errors, the legacy fabricated fallback, mixed notice/JSON output, and HTML escaping.
 
-`app.py` and its old Flask requirements are a deliberately vulnerable scanner target. Do not deploy that demo as a public application. A failing pipeline can be the expected policy outcome; it is not evidence of a successful production deployment.
+`app.py` and its Flask requirements are a deliberately vulnerable scanner target. Do not deploy that demo as a public application. A green policy-demo CI run confirms the expected block; it is not evidence of a successful production deployment or a clean scan.
 
 ## Limits
 

@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from security_gate import main
-from report_io import load_report, ReportError
+from report_io import load_report, ReportError, safety_count
 
 def safety(findings=None, **extra):
     report={'vulnerabilities':findings or [],'report_meta':{'vulnerabilities_found':len(findings or [])},'scanned_packages':{}}
@@ -42,5 +42,12 @@ class GateTests(unittest.TestCase):
     def test_invalid_bandit_shapes_and_scan_errors(self):
         for report in [{'results':[],'errors':[{'reason':'parse failure'}]}, {'results':[{'issue_severity':'UNKNOWN'}]}, {'results':[], 'metrics':{'_totals':{'SEVERITY.HIGH':-1}}}]:
             self.bandit.write_text(json.dumps(report));self.assertEqual(self.gate(),2)
+
+    def test_checked_in_safety_fixture_is_explicitly_synthetic_and_blocking(self):
+        fixture = Path(__file__).resolve().parents[1] / 'examples' / 'safety-report.json'
+        report = load_report(fixture, 'Safety')
+        self.assertEqual(report['report_meta']['scan_target'], 'synthetic fixture')
+        self.assertIn('Synthetic', report['vulnerabilities'][0]['advisory'])
+        self.assertGreater(safety_count(report), 0)
 
 if __name__ == '__main__':unittest.main()
